@@ -49,6 +49,10 @@ HOSTNAME="${MEDIA_VISION_HOSTNAME:-$DEFAULT_HOSTNAME}"
 BRIDGE="${MEDIA_VISION_BRIDGE:-$DEFAULT_BRIDGE}"
 IP_CONFIG="${MEDIA_VISION_IP:-dhcp}"
 GATEWAY="${MEDIA_VISION_GATEWAY:-}"
+DNS_SERVER="${MEDIA_VISION_DNS_SERVER:-}"
+ROOT_SSH="${MEDIA_VISION_ROOT_SSH:-no}"
+ROOT_PASSWORD=""
+ROOT_PASSWORD_FILE="${MEDIA_VISION_ROOT_PASSWORD_FILE:-}"
 DISK_GIB="${MEDIA_VISION_DISK_GIB:-$DEFAULT_DISK_GIB}"
 CORES="${MEDIA_VISION_CORES:-$DEFAULT_CORES}"
 MEMORY_MIB="${MEDIA_VISION_MEMORY_MIB:-$DEFAULT_MEMORY_MIB}"
@@ -124,6 +128,14 @@ The key is hidden while typing.")"
     [ -n "$KEY" ] || die "Hosted metadata access key cannot be empty"
 }
 
+default_gateway_for_ipv4() {
+    local cidr="$1"
+    local ip="${cidr%%/*}"
+    if [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.[0-9]{1,3}$ ]]; then
+        printf '%s.%s.%s.1' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    fi
+}
+
 visual_advanced() {
     VMID="$(visual_input "CONTAINER ID" "Set the Media Vision LXC VMID" "$VMID")"
     [[ "$VMID" =~ ^[0-9]+$ ]] || die "LXC VMID must be numeric"
@@ -162,11 +174,30 @@ visual_advanced() {
             IP_CONFIG="$(visual_input "STATIC IPv4 ADDRESS" "Enter static IPv4 CIDR
 Example: 192.168.1.50/24" "$static_default")"
             [ -n "$IP_CONFIG" ] || die "Static IPv4 CIDR cannot be empty"
-            GATEWAY="$(visual_input "IPv4 GATEWAY" "Enter the IPv4 gateway
-Example: 192.168.1.1" "$GATEWAY")"
+            gateway_default="$GATEWAY"
+            [ -n "$gateway_default" ] || gateway_default="$(default_gateway_for_ipv4 "$IP_CONFIG")"
+            GATEWAY="$(visual_input "IPv4 GATEWAY" "Enter the IPv4 gateway" "$gateway_default")"
             [ -n "$GATEWAY" ] || die "IPv4 gateway cannot be empty"
             ;;
     esac
+
+    DNS_SERVER="$(visual_input "DNS SERVER" "Enter a DNS server IP.
+
+Leave blank to use the Proxmox/default DNS." "$DNS_SERVER")"
+
+    if (whiptail         --backtitle "Media Vision Proxmox Installer"         --defaultno         --title "ROOT SSH ACCESS"         --yesno "Enable root SSH access using a password?" 11 62); then
+        ROOT_SSH=yes
+        ROOT_PASSWORD="$(visual_password "ROOT SSH PASSWORD" "Set the root password used for SSH.
+
+The password is hidden while typing.")"
+        [ -n "$ROOT_PASSWORD" ] || die "Root SSH password cannot be empty"
+        ROOT_PASSWORD_CONFIRM="$(visual_password "CONFIRM ROOT SSH PASSWORD" "Enter the root SSH password again.")"
+        [ "$ROOT_PASSWORD" = "$ROOT_PASSWORD_CONFIRM" ] || die "Root SSH passwords do not match"
+        unset ROOT_PASSWORD_CONFIRM
+    else
+        ROOT_SSH=no
+        ROOT_PASSWORD=""
+    fi
 
     TIMEZONE="$(visual_input "TIMEZONE" "Container/application timezone" "$TIMEZONE")"
     [ -n "$TIMEZONE" ] || die "Timezone cannot be empty"
@@ -189,6 +220,8 @@ RAM:              $MEMORY_MIB MiB
 Swap:             $SWAP_MIB MiB
 Bridge:           $BRIDGE
 IPv4:             $network
+DNS:              ${DNS_SERVER:-Proxmox/default}
+Root SSH:         $ROOT_SSH
 Timezone:         $TIMEZONE
 Update channel:   $UPDATE_CHANNEL
 Metadata API:     $METADATA_URL
@@ -213,6 +246,10 @@ Use TAB or Arrow keys to navigate, ENTER to select."             18 66 6        
                 BRIDGE="${MEDIA_VISION_BRIDGE:-$DEFAULT_BRIDGE}"
                 IP_CONFIG="${MEDIA_VISION_IP:-dhcp}"
                 GATEWAY="${MEDIA_VISION_GATEWAY:-}"
+                DNS_SERVER="${MEDIA_VISION_DNS_SERVER:-}"
+                ROOT_SSH="${MEDIA_VISION_ROOT_SSH:-no}"
+                ROOT_PASSWORD=""
+                ROOT_PASSWORD_FILE="${MEDIA_VISION_ROOT_PASSWORD_FILE:-}"
                 DISK_GIB="${MEDIA_VISION_DISK_GIB:-$DEFAULT_DISK_GIB}"
                 CORES="${MEDIA_VISION_CORES:-$DEFAULT_CORES}"
                 MEMORY_MIB="${MEDIA_VISION_MEMORY_MIB:-$DEFAULT_MEMORY_MIB}"
@@ -239,11 +276,34 @@ else
     [[ "$SWAP_MIB" =~ ^[0-9]+$ ]] || die "Swap must be numeric"
 
     if [ "$IP_CONFIG" != "dhcp" ] && [ -z "$GATEWAY" ]; then
-        die "MEDIA_VISION_GATEWAY is required with a static MEDIA_VISION_IP"
+        GATEWAY="$(default_gateway_for_ipv4 "$IP_CONFIG")"
+        [ -n "$GATEWAY" ] || die "MEDIA_VISION_GATEWAY is required with a static MEDIA_VISION_IP"
+    fi
+
+    case "$ROOT_SSH" in
+        yes|no) ;;
+        *) die "MEDIA_VISION_ROOT_SSH must be yes or no" ;;
+    esac
+    if [ "$ROOT_SSH" = "yes" ]; then
+        [ -n "$ROOT_PASSWORD_FILE" ] || die "MEDIA_VISION_ROOT_PASSWORD_FILE is required when unattended root SSH is enabled"
+        [ -r "$ROOT_PASSWORD_FILE" ] || die "MEDIA_VISION_ROOT_PASSWORD_FILE is not readable"
     fi
 
     [ -n "$METADATA_URL" ] || die "MEDIA_VISION_METADATA_URL is required for unattended installs"
     [ -n "$KEY" ] || die "MEDIA_VISION_METADATA_KEY is required for unattended installs"
+fi
+
+if [ "$IP_CONFIG" != "dhcp" ] && [ -z "$GATEWAY" ]; then
+    GATEWAY="$(default_gateway_for_ipv4 "$IP_CONFIG")"
+    [ -n "$GATEWAY" ] || die "A gateway is required for static IPv4"
+fi
+
+case "$ROOT_SSH" in
+    yes|no) ;;
+    *) die "Root SSH must be yes or no" ;;
+esac
+if [ "$ROOT_SSH" = "yes" ] && [ -z "$ROOT_PASSWORD" ]; then
+    [ -n "$ROOT_PASSWORD_FILE" ] && [ -r "$ROOT_PASSWORD_FILE" ] || die "A readable root password file is required when root SSH is enabled non-interactively"
 fi
 
 pvesm status -storage "$STORAGE" >/dev/null 2>&1 || die "Unknown or inactive Proxmox storage: $STORAGE"
@@ -259,6 +319,8 @@ echo "  Hostname:   $HOSTNAME"
 echo "  Bridge:     $BRIDGE"
 echo "  IPv4:       $IP_CONFIG"
 [ -n "$GATEWAY" ] && echo "  Gateway:    $GATEWAY"
+[ -n "$DNS_SERVER" ] && echo "  DNS:        $DNS_SERVER"
+echo "  Root SSH:   $ROOT_SSH"
 echo "  Disk:       $DISK_GIB GiB"
 echo "  CPU:        $CORES"
 echo "  RAM:        $MEMORY_MIB MiB"
@@ -286,6 +348,15 @@ umask 077
 printf '%s' "$KEY" > "$TMP/metadata.key"
 unset KEY MEDIA_VISION_METADATA_KEY
 
+if [ "$ROOT_SSH" = "yes" ]; then
+    if [ -n "$ROOT_PASSWORD" ]; then
+        printf '%s' "$ROOT_PASSWORD" > "$TMP/root-password"
+        chmod 0600 "$TMP/root-password"
+        ROOT_PASSWORD_FILE="$TMP/root-password"
+        unset ROOT_PASSWORD
+    fi
+fi
+
 INSTALL_ARGS=(
     --vmid "$VMID"
     --storage "$STORAGE"
@@ -293,6 +364,7 @@ INSTALL_ARGS=(
     --hostname "$HOSTNAME"
     --bridge "$BRIDGE"
     --ip "$IP_CONFIG"
+    --root-ssh "$ROOT_SSH"
     --disk-size "$DISK_GIB"
     --cores "$CORES"
     --memory "$MEMORY_MIB"
@@ -304,5 +376,7 @@ INSTALL_ARGS=(
     --metadata-key-file "$TMP/metadata.key"
 )
 [ -n "$GATEWAY" ] && INSTALL_ARGS+=(--gateway "$GATEWAY")
+[ -n "$DNS_SERVER" ] && INSTALL_ARGS+=(--nameserver "$DNS_SERVER")
+[ "$ROOT_SSH" = "yes" ] && INSTALL_ARGS+=(--root-password-file "$ROOT_PASSWORD_FILE")
 
 "$TMP/install-hosted.sh" "${INSTALL_ARGS[@]}"
