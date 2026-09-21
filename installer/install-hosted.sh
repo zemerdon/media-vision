@@ -12,7 +12,8 @@ DEFAULT_SWAP_MIB=512
 DEFAULT_HOSTNAME=media-vision
 DEFAULT_BRIDGE=vmbr0
 DEFAULT_TEMPLATE_STORAGE=local
-DEFAULT_IMAGE=ghcr.io/zemerdon/media-vision:latest
+DEFAULT_IMAGE=ghcr.io/zemerdon/media-vision@sha256:77d77e06b1bcec050355d60fc7aaded704d37d0f86b6970812212a7b7f20f63c
+DEFAULT_UPDATE_CHANNEL=develop
 DEFAULT_METADATA_URL=""
 
 VMID=""
@@ -27,10 +28,9 @@ CORES="$DEFAULT_CORES"
 MEMORY_MIB="$DEFAULT_MEMORY_MIB"
 SWAP_MIB="$DEFAULT_SWAP_MIB"
 IMAGE="$DEFAULT_IMAGE"
+UPDATE_CHANNEL="$DEFAULT_UPDATE_CHANNEL"
 METADATA_URL="$DEFAULT_METADATA_URL"
 METADATA_KEY_FILE=""
-REGISTRY_USER=""
-REGISTRY_TOKEN_FILE=""
 DOWNLOADS_HOST=""
 SERIES_HOST=""
 MOVIES_HOST=""
@@ -49,8 +49,6 @@ Required:
   --metadata-key-file FILE   Existing file containing the hosted metadata API key
 
 Options:
-  --registry-user USER         GHCR username for a private development image
-  --registry-token-file FILE   File containing a GHCR read token; used via stdin and never logged
   --template-storage NAME    Proxmox storage for Debian template (default: local)
   --hostname NAME            LXC hostname (default: media-vision)
   --bridge NAME              Network bridge (default: vmbr0)
@@ -60,7 +58,8 @@ Options:
   --cores N                  CPU cores (default: 2)
   --memory MIB               RAM (default: 2048)
   --swap MIB                 Swap (default: 512)
-  --image IMAGE              Container image (default: ghcr.io/zemerdon/media-vision:latest)
+  --image IMAGE              Container image (default: v1.0.0 immutable public pre-release digest)
+  --update-channel CHANNEL   Media Vision update channel: develop or stable (default: develop)
   --metadata-url URL         Hosted metadata API URL
   --downloads-host PATH      Optional Proxmox-host path bind-mounted to /srv/media-vision/downloads
   --series-host PATH         Optional Proxmox-host path bind-mounted to /srv/media-vision/series
@@ -88,10 +87,9 @@ while [ "$#" -gt 0 ]; do
         --memory) MEMORY_MIB="$2"; shift 2 ;;
         --swap) SWAP_MIB="$2"; shift 2 ;;
         --image) IMAGE="$2"; shift 2 ;;
+        --update-channel) UPDATE_CHANNEL="$2"; shift 2 ;;
         --metadata-url) METADATA_URL="$2"; shift 2 ;;
         --metadata-key-file) METADATA_KEY_FILE="$2"; shift 2 ;;
-        --registry-user) REGISTRY_USER="$2"; shift 2 ;;
-        --registry-token-file) REGISTRY_TOKEN_FILE="$2"; shift 2 ;;
         --downloads-host) DOWNLOADS_HOST="$2"; shift 2 ;;
         --series-host) SERIES_HOST="$2"; shift 2 ;;
         --movies-host) MOVIES_HOST="$2"; shift 2 ;;
@@ -116,15 +114,15 @@ need_cmd curl
 [ -r "$METADATA_KEY_FILE" ] || die "--metadata-key-file must reference a readable file"
 [ -n "$METADATA_URL" ] || die "--metadata-url cannot be empty"
 
-if [ -n "$REGISTRY_USER" ] || [ -n "$REGISTRY_TOKEN_FILE" ]; then
-    [ -n "$REGISTRY_USER" ] || die "--registry-user is required with --registry-token-file"
-    [ -r "$REGISTRY_TOKEN_FILE" ] || die "--registry-token-file must reference a readable file"
-fi
+case "$UPDATE_CHANNEL" in
+    develop|stable) ;;
+    *) die "--update-channel must be develop or stable" ;;
+esac
 
 UPDATE_IMAGE_REPOSITORY="${IMAGE%@*}"
 UPDATE_IMAGE_REPOSITORY="${UPDATE_IMAGE_REPOSITORY%:*}"
 case "$UPDATE_IMAGE_REPOSITORY" in
-    ghcr.io/zemerdon/media-vision|ghcr.io/zemerdon/media-vision-dev) ;;
+    ghcr.io/zemerdon/media-vision) ;;
     *) die "Unsupported Media Vision image repository: $UPDATE_IMAGE_REPOSITORY" ;;
 esac
 
@@ -205,15 +203,9 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker >/dev/null'
 
 pct exec "$VMID" -- bash -lc 'install -d -m 0755 /opt/media-vision /opt/media-vision/secrets /var/lib/media-vision/config /srv/media-vision/downloads /srv/media-vision/series /srv/media-vision/movies /usr/local/lib/media-vision
-install -d -m 0700 /opt/media-vision/docker-auth
 umask 077
 od -An -N32 -tx1 /dev/urandom | tr -d " \n" > /opt/media-vision/secrets/update_agent_key
 chmod 0600 /opt/media-vision/secrets/update_agent_key'
-
-if [ -n "$REGISTRY_USER" ]; then
-    pct push "$VMID" "$REGISTRY_TOKEN_FILE" /root/.media-vision-ghcr-token -perms 0600
-    pct exec "$VMID" -- bash -lc "set -e; cat /root/.media-vision-ghcr-token | DOCKER_CONFIG=/opt/media-vision/docker-auth docker login ghcr.io -u '$REGISTRY_USER' --password-stdin >/dev/null; rm -f /root/.media-vision-ghcr-token"
-fi
 
 HOST_TMP="$(mktemp -d)"
 trap 'rm -rf "$HOST_TMP"' EXIT
@@ -263,7 +255,15 @@ MEDIA_VISION_UPDATE_ALLOWED_IMAGE=${UPDATE_IMAGE_REPOSITORY}
 EOF
 chmod 0600 "$HOST_TMP/update-agent.env"
 
+cat >"$HOST_TMP/config.xml" <<EOF
+<Config>
+  <Branch>${UPDATE_CHANNEL}</Branch>
+</Config>
+EOF
+chmod 0644 "$HOST_TMP/config.xml"
+
 pct push "$VMID" "$HOST_TMP/compose.yml" /opt/media-vision/compose.yml -perms 0644
+pct push "$VMID" "$HOST_TMP/config.xml" /var/lib/media-vision/config/config.xml -perms 0644
 pct push "$VMID" "$HOST_TMP/media-vision.env" /opt/media-vision/media-vision.env -perms 0600
 pct push "$VMID" "$METADATA_KEY_FILE" /opt/media-vision/secrets/metadata_api_key -perms 0600
 pct push "$VMID" "$HOST_TMP/update-agent.env" /etc/media-vision-update-agent.env -perms 0600
@@ -276,7 +276,7 @@ systemctl enable --now media-vision-update-agent.service >/dev/null
 curl -fsS http://127.0.0.1:18991/health >/dev/null'
 
 echo "Pulling Media Vision image and starting container..."
-pct exec "$VMID" -- bash -lc 'cd /opt/media-vision && DOCKER_CONFIG=/opt/media-vision/docker-auth docker compose --env-file media-vision.env -f compose.yml pull && DOCKER_CONFIG=/opt/media-vision/docker-auth docker compose --env-file media-vision.env -f compose.yml up -d'
+pct exec "$VMID" -- bash -lc 'cd /opt/media-vision && docker compose --env-file media-vision.env -f compose.yml pull && docker compose --env-file media-vision.env -f compose.yml up -d'
 
 echo "Waiting for Media Vision health..."
 for attempt in $(seq 1 60); do
