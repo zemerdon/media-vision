@@ -156,6 +156,9 @@ if [ "$IP_CONFIG" != "dhcp" ]; then
 fi
 
 echo "Creating Media Vision LXC $VMID ($DISK_GIB GiB root disk)..."
+PCT_CREATE_UMASK="$(umask)"
+umask 022
+set +e
 pct create "$VMID" "$TEMPLATE_REF" \
     --hostname "$HOSTNAME" \
     --ostype debian \
@@ -167,6 +170,10 @@ pct create "$VMID" "$TEMPLATE_REF" \
     --rootfs "${STORAGE}:${DISK_GIB}" \
     --net0 "$NET0" \
     --onboot 1
+PCT_CREATE_RC=$?
+set -e
+umask "$PCT_CREATE_UMASK"
+[ "$PCT_CREATE_RC" -eq 0 ] || die "Failed to create LXC $VMID (pct create exit $PCT_CREATE_RC)"
 
 mp=0
 for spec in "$DOWNLOADS_HOST:/srv/media-vision/downloads" "$SERIES_HOST:/srv/media-vision/series" "$MOVIES_HOST:/srv/media-vision/movies"; do
