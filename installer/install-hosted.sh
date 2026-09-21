@@ -12,7 +12,7 @@ DEFAULT_SWAP_MIB=512
 DEFAULT_HOSTNAME=media-vision
 DEFAULT_BRIDGE=vmbr0
 DEFAULT_TEMPLATE_STORAGE=local
-DEFAULT_IMAGE=ghcr.io/zemerdon/media-vision@sha256:40e86b2b0cf12074b48b3880bdd2f947dfb198cf9b0cdaff1bc37b6aa3051faf
+DEFAULT_IMAGE=ghcr.io/zemerdon/media-vision@sha256:d4f128e5ebbebdb9da93e1d676379428fd089d0408e3323271647eefaf5c28c5
 DEFAULT_UPDATE_CHANNEL=develop
 DEFAULT_TIMEZONE=Etc/UTC
 DEFAULT_METADATA_URL=""
@@ -258,15 +258,17 @@ apt-get update >/dev/null
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
 systemctl enable --now docker >/dev/null'
 
-pct exec "$VMID" -- bash -lc 'install -d -m 0755 /opt/media-vision /opt/media-vision/secrets /var/lib/media-vision/config /srv/media-vision/downloads /srv/media-vision/series /srv/media-vision/movies /usr/local/lib/media-vision
+pct exec "$VMID" -- bash -lc 'install -d -m 0755 /opt/media-vision /opt/media-vision/secrets /var/lib/media-vision/config /usr/local/lib/media-vision
 umask 077
 od -An -N32 -tx1 /dev/urandom | tr -d " \n" > /opt/media-vision/secrets/update_agent_key
-chmod 0600 /opt/media-vision/secrets/update_agent_key'
+chown 1000:1000 /opt/media-vision/secrets/update_agent_key
+chmod 0400 /opt/media-vision/secrets/update_agent_key'
 
 HOST_TMP="$(mktemp -d)"
 trap 'rm -rf "$HOST_TMP"' EXIT
 
-cat >"$HOST_TMP/compose.yml" <<'EOF'
+{
+cat <<'EOF'
 services:
   media-vision:
     image: ${MEDIA_VISION_IMAGE}
@@ -287,9 +289,11 @@ services:
       - update_agent_key
     volumes:
       - /var/lib/media-vision/config:/config
-      - /srv/media-vision/downloads:/downloads
-      - /srv/media-vision/series:/media/series
-      - /srv/media-vision/movies:/media/movies
+EOF
+[ -n "$DOWNLOADS_HOST" ] && printf '%s\n' '      - /srv/media-vision/downloads:/downloads'
+[ -n "$SERIES_HOST" ] && printf '%s\n' '      - /srv/media-vision/series:/media/series'
+[ -n "$MOVIES_HOST" ] && printf '%s\n' '      - /srv/media-vision/movies:/media/movies'
+cat <<'EOF'
     security_opt:
       - no-new-privileges:true
 secrets:
@@ -298,6 +302,7 @@ secrets:
   update_agent_key:
     file: /opt/media-vision/secrets/update_agent_key
 EOF
+} >"$HOST_TMP/compose.yml"
 
 cat >"$HOST_TMP/media-vision.env" <<EOF
 MEDIA_VISION_IMAGE=${IMAGE}
