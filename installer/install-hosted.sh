@@ -24,6 +24,9 @@ HOSTNAME="$DEFAULT_HOSTNAME"
 BRIDGE="$DEFAULT_BRIDGE"
 IP_CONFIG=dhcp
 GATEWAY=""
+DNS_SERVER=""
+ROOT_SSH=no
+ROOT_PASSWORD_FILE=""
 DISK_GIB="$DEFAULT_DISK_GIB"
 CORES="$DEFAULT_CORES"
 MEMORY_MIB="$DEFAULT_MEMORY_MIB"
@@ -56,6 +59,9 @@ Options:
   --bridge NAME              Network bridge (default: vmbr0)
   --ip VALUE                 dhcp or CIDR address (default: dhcp)
   --gateway ADDRESS          Required with a static --ip
+  --nameserver ADDRESS       Optional DNS server for the LXC
+  --root-ssh yes|no          Enable password-based root SSH (default: no)
+  --root-password-file FILE  Required when --root-ssh yes; file must contain the root password
   --disk-size GIB            Root disk size (default: 16)
   --cores N                  CPU cores (default: 2)
   --memory MIB               RAM (default: 2048)
@@ -85,6 +91,9 @@ while [ "$#" -gt 0 ]; do
         --bridge) BRIDGE="$2"; shift 2 ;;
         --ip) IP_CONFIG="$2"; shift 2 ;;
         --gateway) GATEWAY="$2"; shift 2 ;;
+        --nameserver) DNS_SERVER="$2"; shift 2 ;;
+        --root-ssh) ROOT_SSH="$2"; shift 2 ;;
+        --root-password-file) ROOT_PASSWORD_FILE="$2"; shift 2 ;;
         --disk-size) DISK_GIB="$2"; shift 2 ;;
         --cores) CORES="$2"; shift 2 ;;
         --memory) MEMORY_MIB="$2"; shift 2 ;;
@@ -118,6 +127,14 @@ need_cmd curl
 [ -r "$METADATA_KEY_FILE" ] || die "--metadata-key-file must reference a readable file"
 [ -n "$METADATA_URL" ] || die "--metadata-url cannot be empty"
 [ -n "$TIMEZONE" ] || die "--timezone cannot be empty"
+
+case "$ROOT_SSH" in
+    yes|no) ;;
+    *) die "--root-ssh must be yes or no" ;;
+esac
+if [ "$ROOT_SSH" = "yes" ]; then
+    [ -r "$ROOT_PASSWORD_FILE" ] || die "--root-password-file must reference a readable file when --root-ssh yes"
+fi
 
 case "$UPDATE_CHANNEL" in
     develop|stable) ;;
@@ -160,6 +177,9 @@ if [ "$IP_CONFIG" != "dhcp" ]; then
     NET0="${NET0},gw=${GATEWAY}"
 fi
 
+PCT_CREATE_EXTRA=()
+[ -n "$DNS_SERVER" ] && PCT_CREATE_EXTRA+=(--nameserver "$DNS_SERVER")
+
 echo "Creating Media Vision LXC $VMID ($DISK_GIB GiB root disk)..."
 PCT_CREATE_UMASK="$(umask)"
 umask 022
@@ -174,7 +194,8 @@ pct create "$VMID" "$TEMPLATE_REF" \
     --swap "$SWAP_MIB" \
     --rootfs "${STORAGE}:${DISK_GIB}" \
     --net0 "$NET0" \
-    --onboot 1
+    --onboot 1 \
+    "${PCT_CREATE_EXTRA[@]}"
 PCT_CREATE_RC=$?
 set -e
 umask "$PCT_CREATE_UMASK"
@@ -194,12 +215,35 @@ pct start "$VMID"
 
 echo "Waiting for network and apt inside the LXC..."
 for attempt in $(seq 1 60); do
-    if pct exec "$VMID" -- bash -lc 'getent hosts download.docker.com >/dev/null 2>&1 && apt-get update >/dev/null 2>&1'; then
+    if pct exec "$VMID" -- bash -lc 'export LC_ALL=C LANG=C; getent hosts download.docker.com >/dev/null 2>&1 && apt-get update >/dev/null 2>&1'; then
         break
     fi
     [ "$attempt" -lt 60 ] || die "LXC network/apt did not become ready"
     sleep 2
 done
+
+echo "Configuring locale..."
+pct exec "$VMID" -- bash -lc 'set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C
+apt-get install -y locales >/dev/null
+if ! grep -Eq "^en_US.UTF-8 UTF-8$" /etc/locale.gen; then
+    sed -i "s/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen
+fi
+locale-gen en_US.UTF-8 >/dev/null
+update-locale LANG=en_US.UTF-8'
+
+if [ "$ROOT_SSH" = "yes" ]; then
+    echo "Enabling password-based root SSH..."
+    pct exec "$VMID" -- bash -lc 'export DEBIAN_FRONTEND=noninteractive LC_ALL=C LANG=C; apt-get install -y openssh-server >/dev/null'
+    pct exec "$VMID" -- chpasswd < <(printf 'root:%s\n' "$(cat "$ROOT_PASSWORD_FILE")")
+    pct exec "$VMID" -- bash -lc 'set -euo pipefail
+install -d -m 0755 /etc/ssh/sshd_config.d
+cat >/etc/ssh/sshd_config.d/99-media-vision-root.conf <<EOF
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+systemctl restart ssh'
+fi
 
 echo "Installing Docker Engine..."
 pct exec "$VMID" -- bash -lc 'set -euo pipefail
