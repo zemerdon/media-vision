@@ -2,9 +2,9 @@
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/zemerdon/media-vision/main/installer"
-RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:9ac7c95517519690ec8307007ccd46e5cfa7b536e8f9d8a6debc2989fff85148}"
+RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:d93f1fd7311b77d0a3f22c6f678689ef50220bedf18d81736f69a922198e75af}"
 UPDATE_CHANNEL="${MEDIA_VISION_UPDATE_CHANNEL:-develop}"
-DEV_METADATA_URL="${MEDIA_VISION_METADATA_URL:-http://50.50.50.16:18992}"
+METADATA_URL="${MEDIA_VISION_METADATA_URL:-}"
 
 die() {
     echo "ERROR: $*" >&2
@@ -40,6 +40,15 @@ echo "  Channel:    $UPDATE_CHANNEL"
 echo "  Root disk:  16 GiB"
 echo
 
+if [ -z "$METADATA_URL" ]; then
+    if [ ! -r /dev/tty ]; then
+        die "No terminal is available for the hosted metadata API URL prompt"
+    fi
+    read -r -p "Hosted metadata API URL: " METADATA_URL </dev/tty
+fi
+
+[ -n "$METADATA_URL" ] || die "Hosted metadata API URL cannot be empty"
+
 KEY="${MEDIA_VISION_METADATA_KEY:-}"
 if [ -z "$KEY" ]; then
     if [ ! -r /dev/tty ]; then
@@ -69,4 +78,4 @@ umask 077
 printf '%s' "$KEY" > "$TMP/metadata.key"
 unset KEY MEDIA_VISION_METADATA_KEY
 
-"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$RELEASE_IMAGE"     --update-channel "$UPDATE_CHANNEL"     --metadata-url "$DEV_METADATA_URL"     --metadata-key-file "$TMP/metadata.key"
+"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$RELEASE_IMAGE"     --update-channel "$UPDATE_CHANNEL"     --metadata-url "$METADATA_URL"     --metadata-key-file "$TMP/metadata.key"
