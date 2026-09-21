@@ -1,0 +1,27 @@
+[Unit]
+Description=Media Vision Container Update Agent
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/media-vision/update-agent.py
+Environment=MEDIA_VISION_UPDATE_BIND=127.0.0.1
+Environment=MEDIA_VISION_UPDATE_PORT=18991
+Environment=MEDIA_VISION_UPDATE_COMPOSE_FILE=/opt/media-vision/compose.yml
+Environment=MEDIA_VISION_UPDATE_ENV_FILE=/opt/media-vision/media-vision.env
+Environment=MEDIA_VISION_UPDATE_SECRET_FILE=/opt/media-vision/secrets/update_agent_key
+Environment=MEDIA_VISION_UPDATE_HEALTH_URL=http://127.0.0.1:8989/ping
+EnvironmentFile=-/etc/media-vision-update-agent.env
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/media-vision
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
