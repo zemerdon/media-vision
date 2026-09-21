@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/zemerdon/media-vision/main/installer"
-RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:d93f1fd7311b77d0a3f22c6f678689ef50220bedf18d81736f69a922198e75af}"
+RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:40e86b2b0cf12074b48b3880bdd2f947dfb198cf9b0cdaff1bc37b6aa3051faf}"
 UPDATE_CHANNEL="${MEDIA_VISION_UPDATE_CHANNEL:-develop}"
 DEFAULT_DISK_GIB=16
 DEFAULT_CORES=2
