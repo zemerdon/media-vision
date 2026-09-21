@@ -2,7 +2,8 @@
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/zemerdon/media-vision/main/installer"
-DEV_IMAGE="ghcr.io/zemerdon/media-vision-dev:dev"
+RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:77d77e06b1bcec050355d60fc7aaded704d37d0f86b6970812212a7b7f20f63c}"
+UPDATE_CHANNEL="${MEDIA_VISION_UPDATE_CHANNEL:-develop}"
 DEV_METADATA_URL="${MEDIA_VISION_METADATA_URL:-http://50.50.50.16:18992}"
 
 die() {
@@ -29,24 +30,15 @@ BRIDGE="${MEDIA_VISION_BRIDGE:-vmbr0}"
 ip link show "$BRIDGE" >/dev/null 2>&1 || die "Network bridge $BRIDGE does not exist"
 
 echo
-echo "Media Vision development LXC installer"
+echo "Media Vision public pre-release LXC installer"
 echo "  VMID:       $VMID"
 echo "  Storage:    $STORAGE"
 echo "  Template:   $TEMPLATE_STORAGE"
 echo "  Bridge:     $BRIDGE"
-echo "  Image:      $DEV_IMAGE"
+echo "  Image:      $RELEASE_IMAGE"
+echo "  Channel:    $UPDATE_CHANNEL"
 echo "  Root disk:  16 GiB"
 echo
-
-GHCR_TOKEN="${MEDIA_VISION_GHCR_TOKEN:-}"
-if [ -z "$GHCR_TOKEN" ]; then
-    if [ ! -r /dev/tty ]; then
-        die "No terminal is available for the GHCR token prompt"
-    fi
-    read -r -s -p "GitHub package token (read:packages): " GHCR_TOKEN </dev/tty
-    echo >/dev/tty
-fi
-[ -n "$GHCR_TOKEN" ] || die "GitHub package token cannot be empty"
 
 KEY="${MEDIA_VISION_METADATA_KEY:-}"
 if [ -z "$KEY" ]; then
@@ -75,9 +67,6 @@ chmod 0644 "$TMP/media-vision-update-agent.service"
 
 umask 077
 printf '%s' "$KEY" > "$TMP/metadata.key"
-printf '%s' "$GHCR_TOKEN" > "$TMP/ghcr.token"
-unset KEY GHCR_TOKEN MEDIA_VISION_METADATA_KEY MEDIA_VISION_GHCR_TOKEN
+unset KEY MEDIA_VISION_METADATA_KEY
 
-"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$DEV_IMAGE"     --metadata-url "$DEV_METADATA_URL"     --metadata-key-file "$TMP/metadata.key" \
-    --registry-user zemerdon \
-    --registry-token-file "$TMP/ghcr.token"
+"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$RELEASE_IMAGE"     --update-channel "$UPDATE_CHANNEL"     --metadata-url "$DEV_METADATA_URL"     --metadata-key-file "$TMP/metadata.key"
