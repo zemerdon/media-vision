@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/zemerdon/media-vision/main/installer"
-RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:77d77e06b1bcec050355d60fc7aaded704d37d0f86b6970812212a7b7f20f63c}"
+RELEASE_IMAGE="${MEDIA_VISION_IMAGE:-ghcr.io/zemerdon/media-vision@sha256:9ac7c95517519690ec8307007ccd46e5cfa7b536e8f9d8a6debc2989fff85148}"
 UPDATE_CHANNEL="${MEDIA_VISION_UPDATE_CHANNEL:-develop}"
 DEV_METADATA_URL="${MEDIA_VISION_METADATA_URL:-http://50.50.50.16:18992}"
 
