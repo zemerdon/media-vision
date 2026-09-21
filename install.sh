@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RAW_BASE="https://raw.githubusercontent.com/zemerdon/media-vision/main/installer"
-DEV_IMAGE="ghcr.io/zemerdon/media-vision:dev"
+DEV_IMAGE="ghcr.io/zemerdon/media-vision-dev:dev"
 DEV_METADATA_URL="${MEDIA_VISION_METADATA_URL:-http://50.50.50.16:18992}"
 
 die() {
@@ -38,6 +38,16 @@ echo "  Image:      $DEV_IMAGE"
 echo "  Root disk:  16 GiB"
 echo
 
+GHCR_TOKEN="${MEDIA_VISION_GHCR_TOKEN:-}"
+if [ -z "$GHCR_TOKEN" ]; then
+    if [ ! -r /dev/tty ]; then
+        die "No terminal is available for the GHCR token prompt"
+    fi
+    read -r -s -p "GitHub package token (read:packages): " GHCR_TOKEN </dev/tty
+    echo >/dev/tty
+fi
+[ -n "$GHCR_TOKEN" ] || die "GitHub package token cannot be empty"
+
 KEY="${MEDIA_VISION_METADATA_KEY:-}"
 if [ -z "$KEY" ]; then
     if [ ! -r /dev/tty ]; then
@@ -65,6 +75,9 @@ chmod 0644 "$TMP/media-vision-update-agent.service"
 
 umask 077
 printf '%s' "$KEY" > "$TMP/metadata.key"
-unset KEY MEDIA_VISION_METADATA_KEY
+printf '%s' "$GHCR_TOKEN" > "$TMP/ghcr.token"
+unset KEY GHCR_TOKEN MEDIA_VISION_METADATA_KEY MEDIA_VISION_GHCR_TOKEN
 
-"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$DEV_IMAGE"     --metadata-url "$DEV_METADATA_URL"     --metadata-key-file "$TMP/metadata.key"
+"$TMP/install-hosted.sh"     --vmid "$VMID"     --storage "$STORAGE"     --template-storage "$TEMPLATE_STORAGE"     --hostname media-vision     --bridge "$BRIDGE"     --ip dhcp     --image "$DEV_IMAGE"     --metadata-url "$DEV_METADATA_URL"     --metadata-key-file "$TMP/metadata.key" \
+    --registry-user zemerdon \
+    --registry-token-file "$TMP/ghcr.token"

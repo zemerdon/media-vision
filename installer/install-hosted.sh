@@ -29,6 +29,8 @@ SWAP_MIB="$DEFAULT_SWAP_MIB"
 IMAGE="$DEFAULT_IMAGE"
 METADATA_URL="$DEFAULT_METADATA_URL"
 METADATA_KEY_FILE=""
+REGISTRY_USER=""
+REGISTRY_TOKEN_FILE=""
 DOWNLOADS_HOST=""
 SERIES_HOST=""
 MOVIES_HOST=""
@@ -47,6 +49,8 @@ Required:
   --metadata-key-file FILE   Existing file containing the hosted metadata API key
 
 Options:
+  --registry-user USER         GHCR username for a private development image
+  --registry-token-file FILE   File containing a GHCR read token; used via stdin and never logged
   --template-storage NAME    Proxmox storage for Debian template (default: local)
   --hostname NAME            LXC hostname (default: media-vision)
   --bridge NAME              Network bridge (default: vmbr0)
@@ -86,6 +90,8 @@ while [ "$#" -gt 0 ]; do
         --image) IMAGE="$2"; shift 2 ;;
         --metadata-url) METADATA_URL="$2"; shift 2 ;;
         --metadata-key-file) METADATA_KEY_FILE="$2"; shift 2 ;;
+        --registry-user) REGISTRY_USER="$2"; shift 2 ;;
+        --registry-token-file) REGISTRY_TOKEN_FILE="$2"; shift 2 ;;
         --downloads-host) DOWNLOADS_HOST="$2"; shift 2 ;;
         --series-host) SERIES_HOST="$2"; shift 2 ;;
         --movies-host) MOVIES_HOST="$2"; shift 2 ;;
@@ -110,9 +116,17 @@ need_cmd curl
 [ -r "$METADATA_KEY_FILE" ] || die "--metadata-key-file must reference a readable file"
 [ -n "$METADATA_URL" ] || die "--metadata-url cannot be empty"
 
+if [ -n "$REGISTRY_USER" ] || [ -n "$REGISTRY_TOKEN_FILE" ]; then
+    [ -n "$REGISTRY_USER" ] || die "--registry-user is required with --registry-token-file"
+    [ -r "$REGISTRY_TOKEN_FILE" ] || die "--registry-token-file must reference a readable file"
+fi
+
 UPDATE_IMAGE_REPOSITORY="${IMAGE%@*}"
 UPDATE_IMAGE_REPOSITORY="${UPDATE_IMAGE_REPOSITORY%:*}"
-[ "$UPDATE_IMAGE_REPOSITORY" = "ghcr.io/zemerdon/media-vision" ] || die "Unsupported Media Vision image repository: $UPDATE_IMAGE_REPOSITORY"
+case "$UPDATE_IMAGE_REPOSITORY" in
+    ghcr.io/zemerdon/media-vision|ghcr.io/zemerdon/media-vision-dev) ;;
+    *) die "Unsupported Media Vision image repository: $UPDATE_IMAGE_REPOSITORY" ;;
+esac
 
 if pct status "$VMID" >/dev/null 2>&1; then
     die "VMID $VMID already exists; refusing to modify it"
@@ -191,10 +205,15 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker >/dev/null'
 
 pct exec "$VMID" -- bash -lc 'install -d -m 0755 /opt/media-vision /opt/media-vision/secrets /var/lib/media-vision/config /srv/media-vision/downloads /srv/media-vision/series /srv/media-vision/movies /usr/local/lib/media-vision
+install -d -m 0700 /opt/media-vision/docker-auth
 umask 077
 od -An -N32 -tx1 /dev/urandom | tr -d " \n" > /opt/media-vision/secrets/update_agent_key
 chmod 0600 /opt/media-vision/secrets/update_agent_key'
 
+if [ -n "$REGISTRY_USER" ]; then
+    pct push "$VMID" "$REGISTRY_TOKEN_FILE" /root/.media-vision-ghcr-token -perms 0600
+    pct exec "$VMID" -- bash -lc "set -e; cat /root/.media-vision-ghcr-token | DOCKER_CONFIG=/opt/media-vision/docker-auth docker login ghcr.io -u '$REGISTRY_USER' --password-stdin >/dev/null; rm -f /root/.media-vision-ghcr-token"
+fi
 
 HOST_TMP="$(mktemp -d)"
 trap 'rm -rf "$HOST_TMP"' EXIT
@@ -257,7 +276,7 @@ systemctl enable --now media-vision-update-agent.service >/dev/null
 curl -fsS http://127.0.0.1:18991/health >/dev/null'
 
 echo "Pulling Media Vision image and starting container..."
-pct exec "$VMID" -- bash -lc 'cd /opt/media-vision && docker compose --env-file media-vision.env -f compose.yml pull && docker compose --env-file media-vision.env -f compose.yml up -d'
+pct exec "$VMID" -- bash -lc 'cd /opt/media-vision && DOCKER_CONFIG=/opt/media-vision/docker-auth docker compose --env-file media-vision.env -f compose.yml pull && DOCKER_CONFIG=/opt/media-vision/docker-auth docker compose --env-file media-vision.env -f compose.yml up -d'
 
 echo "Waiting for Media Vision health..."
 for attempt in $(seq 1 60); do
