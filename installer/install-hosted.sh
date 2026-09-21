@@ -14,6 +14,7 @@ DEFAULT_BRIDGE=vmbr0
 DEFAULT_TEMPLATE_STORAGE=local
 DEFAULT_IMAGE=ghcr.io/zemerdon/media-vision@sha256:d93f1fd7311b77d0a3f22c6f678689ef50220bedf18d81736f69a922198e75af
 DEFAULT_UPDATE_CHANNEL=develop
+DEFAULT_TIMEZONE=Etc/UTC
 DEFAULT_METADATA_URL=""
 
 VMID=""
@@ -29,6 +30,7 @@ MEMORY_MIB="$DEFAULT_MEMORY_MIB"
 SWAP_MIB="$DEFAULT_SWAP_MIB"
 IMAGE="$DEFAULT_IMAGE"
 UPDATE_CHANNEL="$DEFAULT_UPDATE_CHANNEL"
+TIMEZONE="$DEFAULT_TIMEZONE"
 METADATA_URL="$DEFAULT_METADATA_URL"
 METADATA_KEY_FILE=""
 DOWNLOADS_HOST=""
@@ -60,6 +62,7 @@ Options:
   --swap MIB                 Swap (default: 512)
   --image IMAGE              Container image (default: v1.0.0 immutable public pre-release digest)
   --update-channel CHANNEL   Media Vision update channel: develop or stable (default: develop)
+  --timezone ZONE            Container/application timezone (default: Etc/UTC)
   --metadata-url URL         Hosted metadata API URL
   --downloads-host PATH      Optional Proxmox-host path bind-mounted to /srv/media-vision/downloads
   --series-host PATH         Optional Proxmox-host path bind-mounted to /srv/media-vision/series
@@ -88,6 +91,7 @@ while [ "$#" -gt 0 ]; do
         --swap) SWAP_MIB="$2"; shift 2 ;;
         --image) IMAGE="$2"; shift 2 ;;
         --update-channel) UPDATE_CHANNEL="$2"; shift 2 ;;
+        --timezone) TIMEZONE="$2"; shift 2 ;;
         --metadata-url) METADATA_URL="$2"; shift 2 ;;
         --metadata-key-file) METADATA_KEY_FILE="$2"; shift 2 ;;
         --downloads-host) DOWNLOADS_HOST="$2"; shift 2 ;;
@@ -113,6 +117,7 @@ need_cmd curl
 [ "$DISK_GIB" -ge 16 ] || die "Hosted Metadata root disk must be at least 16 GiB"
 [ -r "$METADATA_KEY_FILE" ] || die "--metadata-key-file must reference a readable file"
 [ -n "$METADATA_URL" ] || die "--metadata-url cannot be empty"
+[ -n "$TIMEZONE" ] || die "--timezone cannot be empty"
 
 case "$UPDATE_CHANNEL" in
     develop|stable) ;;
@@ -228,7 +233,7 @@ services:
       PUID: 1000
       PGID: 1000
       UMASK: "002"
-      TZ: ${TZ:-Etc/UTC}
+      TZ: ${TZ}
       MEDIA_VISION_UPDATE_AGENT_URL: http://127.0.0.1:18991/v1/update
       MEDIA_VISION_UPDATE_AGENT_KEY_FILE: /run/secrets/update_agent_key
       SERIESVISION_METADATA_API_URL: ${MEDIA_VISION_METADATA_API_URL}
@@ -253,7 +258,7 @@ EOF
 cat >"$HOST_TMP/media-vision.env" <<EOF
 MEDIA_VISION_IMAGE=${IMAGE}
 MEDIA_VISION_METADATA_API_URL=${METADATA_URL}
-TZ=Etc/UTC
+TZ=${TIMEZONE}
 EOF
 chmod 0600 "$HOST_TMP/media-vision.env"
 
