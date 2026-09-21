@@ -280,7 +280,16 @@ pct push "$VMID" "$UPDATE_AGENT_SERVICE" /etc/systemd/system/media-vision-update
 echo "Starting Media Vision container update agent..."
 pct exec "$VMID" -- bash -lc 'systemctl daemon-reload
 systemctl enable --now media-vision-update-agent.service >/dev/null
-curl -fsS http://127.0.0.1:18991/health >/dev/null'
+for attempt in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:18991/health >/dev/null 2>&1; then
+        exit 0
+    fi
+    sleep 1
+done
+echo "Media Vision update agent did not become healthy." >&2
+systemctl --no-pager --full status media-vision-update-agent.service >&2 || true
+journalctl -u media-vision-update-agent.service -n 80 --no-pager >&2 || true
+exit 1'
 
 echo "Pulling Media Vision image and starting container..."
 pct exec "$VMID" -- bash -lc 'cd /opt/media-vision && docker compose --env-file media-vision.env -f compose.yml pull && docker compose --env-file media-vision.env -f compose.yml up -d'
